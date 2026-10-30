@@ -1,0 +1,155 @@
+---
+title: Clinical conversation agents and retrieval
+org: Sirka
+period: 2025–2026
+role: I built the agent service end to end as its sole author — retrieval, agents, guardrails, the evaluation suite and the deployment pipeline. The surrounding CRM it plugs into was built by the wider team.
+---
+
+Sirka runs a telehealth weight-management clinic in Indonesia. Patient and lead conversations
+arrive over WhatsApp and Instagram, and every one of them was answered by a person. The goal was
+to lower that load and answer outside working hours, with booking a consultation as the thing
+success was measured by.
+
+This is private company code, so what follows describes the design and the measured results
+without links or excerpts. No prompts, clinical rules, prices or knowledge-base content appear
+here.
+
+## Shape of the system
+
+Two tool-calling agents — one facing new leads, one handling post-consultation follow-up — plus
+a third that pre-fills a medical record from the consultation transcript. Each runs as a
+tool-calling loop against a hosted model, with tools that call back into the CRM over an
+authenticated internal boundary. The agents never hold credentials for the downstream clinical
+systems; they ask the CRM, and the CRM makes those calls.
+
+There is no agent framework here, which was a deliberate choice rather than an aesthetic one.
+The prompts carry medical safety wording that clinicians needed to review and amend directly,
+and a framework that assembles prompts at runtime puts that text one layer away from the people
+responsible for it. I wrote the loop instead. The cost is that I own the retry and tool-dispatch
+logic; the benefit is that every word sent to the model is visible in one place, and every
+prompt section, guard pattern and classifier is an operations-editable setting with a validation
+check that refuses an invalid save.
+
+## Retrieval: three signals, and why the third exists
+
+The knowledge base is chunked deterministically along its own section anchors, so a chunk
+boundary never moves unexpectedly between ingests. Internal-only sections are excluded at
+ingest. Price and promotional sections are flagged volatile, and only collections marked
+authoritative are allowed to supply a price at all. Blog content is versioned by namespace so a
+bad ingest can be rolled back rather than repaired in place.
+
+Search fuses three rankings with reciprocal rank fusion:
+
+- **Dense** — cosine similarity over vector embeddings, stored as half-precision vectors with an
+  HNSW index.
+- **Lexical** — full-text ranking in the database.
+- **Code overlap** — exact matching on clinical and product codes.
+
+The third signal is there for a concrete reason. The text tokeniser normalised a product code
+and its suffixed variant to the same token, which made two genuinely different products
+indistinguishable to lexical search. Rather than fight the tokeniser, I indexed the codes
+separately and gave exact matches their own ranking to contribute to the fusion.
+
+Embeddings use a model that supports Matryoshka truncation, cut from 4096 to 1024 dimensions for
+storage and speed. I did not take that on faith — there is a script that checks 1024-dimension
+rankings against the full-width rankings, and the truncation was adopted only after it agreed.
+Query embeddings are cached, because embedding turned out to account for roughly as much latency
+as the retrieval itself.
+
+## What the retrieval actually scores
+
+An 81-case evaluation set, spanning ten categories — prohibited requests, FAQ, pricing, blog
+content, booking, product questions, multi-turn, out-of-scope and typos — at k = 8:
+
+<div class="table-wrap">
+
+| Mode | recall@8 | MRR |
+| --- | --- | --- |
+| Dense | 0.941 | 0.862 |
+| Lexical | 0.309 | 0.270 |
+| **Hybrid** | **0.971** | 0.860 |
+
+</div>
+
+Hybrid wins on recall and is level on MRR. Indonesian and English scored within a point of each
+other, which mattered because the clinic's conversations mix both.
+
+The number I would want a reviewer to ask about is multi-turn recall@8, which came in at
+**0.667** — materially worse than the rest, because a follow-up question that depends on earlier
+context retrieves poorly when embedded on its own. It is written down as the next thing to fix
+rather than folded into an average.
+
+## Safety as code, not as a judge
+
+The temptation with guardrails is to ask a model to check the model. I rejected that for the
+safety gate, for two reasons that I think generalise.
+
+First: a guardrail that depends on a ranking function is not a guardrail. If a safety
+instruction is a retrieved chunk, then its presence depends on retrieval quality, and a
+guardrail that is usually present is not one. So the safety context is pinned into every request
+regardless of its retrieval rank.
+
+Second: a flaky gate gets skipped. A probabilistic check in CI that fails occasionally for
+reasons nobody can reproduce teaches a team to re-run it, and a gate everyone re-runs is not a
+gate. So the blocking checks are deterministic functions:
+
+- Emergency-phrase detection, which runs **before** the model is called, not after.
+- Dose-figure detection, so the agent cannot state a quantity.
+- Personal-medical-question detection, routing to a clinician.
+- An internal-terminology blocklist.
+- A price-citation check, so a price can only come from an authoritative source.
+- A grounding check that refuses an uncited claim.
+- Formality and message-length limits, which are product requirements rather than safety ones.
+
+Model-based classifiers still exist, for urgency, booking intent, lab-result reading, opt-out
+and similar — but each is documented as fail-open or fail-closed according to what failure
+costs. The urgency classifier is the clearest case: it can only *add* an emergency flag, never
+clear one. That constraint came out of testing, where a small model failed to flag an
+unambiguous chest-pain phrasing in Indonesian. The model is allowed to escalate and not to
+de-escalate.
+
+A lesson from the first end-to-end safety run is worth recording. It reported four failures. All
+four turned out to be faulty assertions — the checker was blind to negation and was reading
+correct refusals as violations. After fixing the checker, all twelve cases passed. The failures
+were in the test, not the system, which is a good argument for reading every failure before
+acting on the aggregate.
+
+## Order safety
+
+The post-consultation agent can place an order, which is the highest-risk thing in the system.
+It is checked twice, independently, in the agent and again in the backend: only drugs on the
+prescribing record, never more than the prescribed quantity, one order per record. Plan changes
+go to the consulting doctor for approval rather than being applied.
+
+Delivery phone numbers are parsed from the patient's own message rather than taken from the
+model's output, because on one occasion the model produced a plausible invented number. And one
+category of medication cannot be shipped outside the metropolitan area — that check fails
+closed, routing to a human when the delivery region cannot be established.
+
+## Operations and MLOps
+
+- **Tests:** around 370 test functions. The safety and unit gate runs in CI *before* the
+  container build and before cloud authentication, so a safety failure costs nothing downstream
+  and cannot be bypassed by a successful build.
+- **Nightly end-to-end run** against the live model, separate from the deterministic suite,
+  because the deterministic gate deliberately does not exercise model behaviour.
+- **Audit trail:** every turn writes a compliance record. It stores setting *names*, never
+  patient values — the record proves which configuration produced a reply without becoming a
+  second copy of patient data.
+- **Per-turn traces** surfaced to agents in the inbox, so a human taking over a conversation can
+  see what the model did and which tools it called.
+- **Provider pinning**, after measuring roughly 1 second to first token when pinned against
+  about 14.7 seconds unpinned on the same model.
+- Model routing with documented fallbacks per agent, chosen on cost, latency and healthcare
+  benchmark performance rather than on a single leaderboard.
+- Containerised, deployed to staging on pull request and to production on release, with
+  path-filtered workflows so each service builds independently.
+
+The handover documentation records known gaps as well, including the fact that provider-side
+traces cannot be joined to a conversation ID. I would rather hand over a list of what does not
+work than let someone discover it.
+
+## Stack
+
+Python, FastAPI, PostgreSQL with pgvector, hosted models through OpenRouter, Docker, GitHub
+Actions, Google Cloud.

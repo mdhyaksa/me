@@ -1,0 +1,84 @@
+---
+title: Cited-answer legal research, and realtime voice agents
+org: TaxCognitio · Cliqo
+period: 2025–2026
+role: Founding engineer on the legal research assistant, through its first three milestones. The production platform and evaluation suite that replaced it were built by a colleague afterwards and are not my work. The voice gateway is mine.
+---
+
+Two systems, both private company code, described here in architecture only. I have grouped
+them because they share a problem: a model needs access to more sources, or more tools, than you
+can usefully put in front of it at once.
+
+## A research assistant that has to cite
+
+A retrieval system over Singapore tax and legal material — statutes, court judgments,
+commentaries and tax-authority guidance — answering with citations, across several
+jurisdictions and at three depths of search.
+
+For legal research an uncited answer is worse than no answer, because it cannot be checked and
+it reads as authoritative. That constraint shaped the retrieval rather than the output format.
+
+**Sources are not interchangeable, so the retrieval was not flat.** A statute, a judgment and a
+practitioner commentary differ in authority and in how they are cited, and collapsing them into
+one index loses that. I built per-source retrieval instead, each source bound to its own
+namespace with its own retrieval depth, reranking behaviour, similarity cutoff and metadata
+filters, with a selection step choosing among them. A later revision organised them into an
+explicit source hierarchy.
+
+**Statute lookup turned out to be two problems.** "What does section 10(1)(b) say" is exact
+retrieval — the user has named the thing, and similarity search is the wrong tool, since a
+near-miss returns a neighbouring subsection with quiet confidence. "What provision covers this
+situation" is genuinely a search problem. I split the statute engine accordingly: graph
+traversal over a knowledge graph of the legislation for lookup by reference, vector search for
+lookup by content. Case law went the other way — retrieval over whole judgments rather than
+chunks, because a holding does not survive being cut into fragments.
+
+The agent loop used a ReAct pattern with a custom instruction to retry a different source when a
+tool came back empty, rather than concluding that nothing existed. Models were self-hosted at
+this stage — open-weight models served locally, with an embedding and reranking service
+alongside them — chosen for cost control and for keeping client material in-house, with a
+backup model and retry path when a service was unavailable. Each engine was containerised
+separately and ran on GPU hosts.
+
+**Where my work ends.** I took this through its first three milestones as founding engineer. The
+production platform that replaced it — a different retrieval stack, hosted models, a deep
+research mode, and the evaluation suite with its measured retrieval benchmarks — was built by a
+colleague after I moved off the project. Those numbers are not mine to present, and I do not
+have measured results from my own period on it.
+
+## A voice agent with too many tools
+
+A speech-to-speech assistant over a set of integrations — calendar, mail, messaging and social
+platforms — exposed through MCP servers.
+
+The naive approach is to hand the model every tool from every server. That fails in two ways at
+once: the tool list crowds the context, and a realtime model with dozens of similar tool names
+picks the wrong one with some regularity.
+
+So the model sees **three meta-tools** instead of the full inventory: search for a capability,
+request the schema for a specific tool, then call it. Behind the search sits query rewriting and
+a vector router over the tool catalogue, returning names and descriptions only, so the model
+gets a shortlist rather than a directory. Tool output is summarised before re-entering the
+conversation, because a raw API response spends context the voice loop needs for the dialogue.
+
+Two details worth mentioning because they came from watching it fail. The model sometimes
+skipped the search step and guessed a tool name outright, so the gateway detects that and
+re-injects guidance rather than returning a bare error. And the auth boundary rejects API keys
+passed in the query string when running in production — one of the few places here with a real
+unit test behind it, because it is exactly the kind of convenience that survives into
+production by accident.
+
+The gateway was migrated between realtime model providers during development, which is the main
+reason the provider-specific handling sits behind an internal interface. It handles server-side
+voice activity detection and barge-in, so the user can interrupt mid-reply. An earlier spike
+evaluated a different speech-to-speech model with a hand-rolled bidirectional event protocol;
+that one stayed a prototype and used push-to-talk, with no interruption handling.
+
+**No latency figures.** The gateway has jitter-buffer and turn-timing instrumentation, and I
+used it while building, but no results were recorded anywhere I can cite. I would rather say
+that than reconstruct plausible numbers after the fact.
+
+## Stack
+
+Python, LlamaIndex, Neo4j, Pinecone, Ollama, vLLM, FastAPI. TypeScript, Node, OpenAI Realtime,
+MCP. Docker throughout.

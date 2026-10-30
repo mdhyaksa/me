@@ -1,0 +1,119 @@
+---
+title: A logistics dashboard that answers questions from data
+org: Personal project
+period: 2026
+role: Built solo — semantic layer, query compiler, forecasting, statistical guards, dashboard and deployment.
+---
+
+A logistics analytics dashboard: KPI tiles and charts on one surface, a natural-language query
+interface on the other, demand forecasting with an inventory recommendation, and an
+explainability panel behind every number on both. The dataset is 400 mock orders across one
+calendar year.
+
+Unlike most of the work on this site, this one is open:
+
+- **Code:** [github.com/mdhyaksa/spaceship-scout](https://github.com/mdhyaksa/spaceship-scout)
+- **Live:** [spaceship-scout.m-dhyaksa.workers.dev](https://spaceship-scout.m-dhyaksa.workers.dev/)
+  — the shell loads for anyone, but the API sits behind a login, so the dashboard itself needs
+  credentials.
+
+## The model writes a plan, not SQL
+
+The obvious way to build a natural-language query interface is to have the model write SQL. It
+demos well. It also means the model's output reaches your database, and every failure is a
+database failure — a wrong join, an unbounded scan, a metric silently redefined mid-answer.
+
+Here the model emits a **typed query plan** through a single forced tool call: metrics,
+dimensions, filters, time range, ordering, limit. Code compiles that plan to SQL. The model never
+sees SQL and never produces it, which turns an open-ended generation problem into a constrained
+one where the output space is small enough to validate exhaustively.
+
+It is also not an agent loop. Routing is one field on the plan, so the model makes one decision
+per question rather than reacting through several turns — the thing that varies most between
+models is how many decisions they can chain without drifting, so the design removes the chaining.
+
+## A semantic layer as the only definition
+
+One YAML file defines every metric, dimension, grain, valid grouping and time anchor. Nothing in
+the worker or the frontend defines what a metric means. Changing the meaning of "delayed" is an
+edit to that file and a rebuild — no prompt changes, no application changes — and there are
+conformance tests that fail if a definition leaks into code.
+
+The dashboard tiles are compiled from the same plan format and go through the same validator as
+the chat. That is the property worth having: a dashboard and a chat interface that can disagree
+about what a number means are two products, and the disagreement surfaces in a meeting rather
+than in a test.
+
+Validation is separate from schema conformance, because a structurally valid plan can still be
+semantically nonsense — naming a metric that does not exist, grouping by a field that is not a
+valid grain, requesting a window outside the data's coverage, or scanning unbounded. Each of
+those is a distinct error code with a message that says what was wrong.
+
+One detail that generalises beyond this project: the data ends on a fixed date, so every relative
+range — "last month", "last quarter" — resolves against a declared time anchor rather than the
+wall clock. Anchored to `now`, every such question would correctly return zero rows and look like
+a bug. The anchor is configuration, switchable to live time when the data is live.
+
+## Forecasting that is willing to refuse
+
+Three methods — moving average, linear trend, simple exponential smoothing — selected by
+backtest error, with MAPE or MAE chosen according to whether the series has zeros. Prediction
+intervals at 80% and 95% come from the residual spread. From the forecast it derives an
+inventory recommendation: safety stock from the demand variance over the lead time at a chosen
+service level, a reorder point, and an order-up-to quantity.
+
+The guards matter more than the projection, and this is where I think most forecast features go
+wrong. With twelve monthly points, every series here trips a low-confidence banner, and a SKU
+with too little history is **refused** rather than extrapolated — with a concrete fallback
+pointing at an aggregation level that does have enough data. Fitting a trend line through a
+handful of sparse points produces a number with a confidence interval wide enough to be
+meaningless, and presenting it next to a chart makes it look considered.
+
+The model's only role in any of this is extracting parameters from the question. Every number is
+computed.
+
+## The statistical sufficiency check
+
+This is the part I would most want to be asked about.
+
+After a query executes and before any answer text is written, a deterministic check runs over the
+result set. It finds the smallest denominator behind any ratio metric, compares it against a
+minimum-group floor declared in the semantic layer, and lists the groups that fall below it. When
+the answer would rank groups — carrier A beats carrier B on on-time rate — it runs a
+two-proportion z-test, or a chi-square test across more than two groups, and records whether the
+ranking is statistically significant.
+
+The answer is then only allowed to claim what the check supports. A difference that does not
+clear significance is reported as not distinguishable, not as a ranking.
+
+The reason to build this is that the failure it prevents is the normal case, not an edge case. A
+dashboard that will happily tell you a carrier is underperforming on the basis of nine orders is
+not a neutral tool — somebody acts on it. Thin slices are a property of segmentation itself, so
+the problem does not go away with more data; it moves to whichever segment the user drills into
+next. Putting the test between execution and the answer is the only place it reliably applies to
+both the chat and the tiles.
+
+Every figure on either surface has an explainability panel behind it: the plan that produced it,
+the resolved time window, the row counts, the method selected and the checks that ran. The
+intent is that a number should never be the end of the trail.
+
+## Engineering notes
+
+- **Tests** across the compiler, the validator, time resolution, the forecast selection and
+  guards, the sufficiency statistics, golden-output snapshots, and a dialect parity suite that
+  checks the SQLite and Postgres emitters agree.
+- **Portable SQL by construction.** The semantic layer uses plain column references and one
+  portable date function that the compiler maps per dialect, so no dialect-specific SQL appears
+  in a metric definition. The parity tests are what keep that true.
+- **Secrets never reach the client.** The API key lives as a deployment secret; the browser
+  bundle carries no metric definitions, thresholds or glossary, because those stay server-side.
+  The auth gate fails closed — with no credentials configured, nothing authenticates, because the
+  opposite default turns one forgotten deployment step into a public dataset.
+- **Degrades honestly.** The dashboard, forecasts and every explainability panel work with no
+  model access at all, since they are hand-written plans. Only the chat needs a key, and it says
+  so rather than failing opaquely.
+
+## Stack
+
+TypeScript throughout. React and Recharts on the client, Cloudflare Workers and D1 on the server,
+Zod for schema validation, Vitest for tests, deployed from the repository with Wrangler.

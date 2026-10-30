@@ -1,0 +1,161 @@
+---
+title: Predicting antibiotic activity against drug-resistant pneumococcus
+org: Imperial College London
+period: 2024–2026
+role: Second of seven authors. I wrote the modelling code and ran the numerical experiments together with the first author, and selected the candidates for in-vitro testing with the principal investigator. The microbiological experiments were performed and analysed by collaborators at the MRC Centre for Global Infectious Disease Analysis.
+---
+
+*Streptococcus pneumoniae* is a priority pathogen for new antibiotics, and resistance to the
+existing ones is common. Developing a new drug takes a decade; finding one among drugs that
+already exist takes less. The question we set out to answer was whether a model could pick
+repurposing candidates well enough that a lab would bother testing them.
+
+The work is published, open access, so the full method and every number is checkable:
+
+> Fitch, J. S.; **Ariadi, M. D.**; Kwun, M. J.; Howells, L.; Hernandez-Hernandez, S.;
+> Croucher, N. J.; Ballester, P. J. "Artificial Intelligence-Guided Phenotypic Drug Repurposing
+> Against *Streptococcus pneumoniae*." *Advanced Science*, 2026.
+> [doi:10.1002/advs.76959](https://doi.org/10.1002/advs.76959) ·
+> [full text on Europe PMC](https://europepmc.org/article/MED/42745629)
+
+My working repository for the modelling is
+[github.com/mdhyaksa/pneumoccusVS](https://github.com/mdhyaksa/pneumoccusVS). Note that the
+paper's own data-availability statement points at the first author's repository, which is the
+canonical artefact for the publication.
+
+## The data problem comes first
+
+We assembled 36,352 compounds from ChEMBL and PubChem: 1,849 with measured activity against
+*S. pneumoniae*, mostly from assays on erythromycin- and penicillin-resistant strains, and
+34,503 inactive.
+
+That ratio is the first thing to be suspicious of, and the inactives are where the judgement
+lies. Genuine pneumococcal screening data is scarce, so the bulk of the negative class comes
+from a published *S. aureus* growth-inhibition screen, treated as presumed-inactive. That is an
+assumption, not a measurement, and the paper justifies it on two grounds: the hit rate in
+pneumococcal screens runs around 0.6%, so an untested compound is overwhelmingly likely to be
+inactive; and disk-diffusion results for the two species correlate at 0.80 across 47
+antibiotic–concentration pairs. We also ablated it — retraining without those presumed
+negatives — and reported what changed.
+
+## The split matters more than the model
+
+A molecule that closely resembles its training set is easy to score, and scoring it well tells
+you almost nothing about how the model behaves on something new. Random splits over chemical
+data produce exactly this illusion, and the resulting metrics are optimistic in a way that does
+not survive contact with a lab.
+
+So the evaluation was built to be pessimistic on purpose:
+
+1. **Hold out the structural outliers.** Any molecule whose maximum Tanimoto similarity to
+   anything else in the dataset fell below 0.5 was removed to a held-out set — 4,812 molecules.
+   These are the compounds the model has least right to be confident about, and they are the
+   test set.
+2. **Cluster what remains.** UMAP with a Jaccard metric, then agglomerative clustering, with
+   *K* chosen by silhouette score over a sweep from 3 to 50. The sweep selected **K = 26**.
+   Positive rates across clusters range from 0% to 57%, which is itself a warning about what a
+   random split would have mixed together.
+3. **Leave one cluster out.** Train an ensemble member per held-out cluster, so every member is
+   validated on a scaffold group it never saw.
+
+## Three model families over the same splits
+
+<div class="table-wrap">
+
+| Model | Representation | Shape |
+| --- | --- | --- |
+| Random forest | 2048-bit Morgan fingerprints, radius 3 | Grid search, 5-fold stratified CV, optimised for PR-AUC |
+| D-MPNN | Learned molecular graph + 200 RDKit descriptors | 26-model ensemble, median aggregation |
+| MoLFormer | Pre-trained chemical language model | 5-model ensemble, frozen encoder + FFN head |
+
+</div>
+
+The random forest is the baseline worth taking seriously, not a straw man — fingerprints plus
+trees remain hard to beat on small, imbalanced chemical datasets. The graph network learns its
+own representation. The third used a transformer pre-trained on 111 million SMILES strings with
+the encoder frozen, so roughly 80% of its 55 million parameters never updated and only the head
+was trained; the paper reports this as the first use of a pre-trained molecular language model
+for antibiotic screening.
+
+Everything was tuned against PR-AUC rather than accuracy or ROC-AUC. With a positive class
+under 6%, accuracy is uninformative and ROC-AUC is flattering; precision-recall is the metric
+that reflects what you care about, which is the quality of the top of the ranking.
+
+## Retrospective results
+
+On the held-out structural outliers, with 49 actives present:
+
+<div class="table-wrap">
+
+| Model or combination | MCC | Precision | Recall | PR-AUC | ROC-AUC |
+| --- | --- | --- | --- | --- | --- |
+| MoLFormer ∩ RF | 0.493 | 1.000 | 0.245 | **0.630** | 0.979 |
+| MoLFormer ∪ RF | **0.556** | 0.591 | 0.531 | 0.590 | 0.979 |
+| Random forest, tuned | 0.536 | 0.889 | 0.327 | 0.526 | 0.963 |
+| MoLFormer ensemble | 0.505 | 0.579 | 0.449 | 0.528 | 0.975 |
+| D-MPNN ensemble | 0.424 | 0.500 | 0.367 | 0.437 | 0.949 |
+
+</div>
+
+The intersection of the two models buys precision at the cost of recall; the union does the
+reverse. For a screen where the downstream cost is a wet-lab assay, the intersection is the
+useful end of that trade — but note the ROC-AUC column sitting at 0.95–0.98 for every row,
+including the weakest. It is the least discriminating number in the table.
+
+## The prospective test, which is the real one
+
+Retrospective metrics are a rehearsal. We screened 6,747 compounds from the Drug Repurposing
+Hub, excluding anything already tested against *S. pneumoniae* in training, took the compounds
+scoring highest by consensus and by each model individually, triaged them by hand, and sent 11
+to the lab.
+
+**Nine of the 11 strongly reduced growth of *S. pneumoniae* R6, at IC50 ≤ 0.4 µg/mL.**
+Thiostrepton came in at 0.0001 µg/mL — 60 picomolar — and ceftiofur at 0.0004 µg/mL. Only one
+of the 11, levofloxacin, was already known to be active against this organism. Thiostrepton
+held up against three multidrug-resistant strains, at 120 pM.
+
+## Where the models disagreed
+
+This is the part I find most worth presenting. Ranking the 11 tested drugs by model score and
+correlating against their measured potency:
+
+<div class="table-wrap">
+
+| Model | Spearman ρ | p |
+| --- | --- | --- |
+| MoLFormer ensemble | **0.75** | 0.0073 |
+| MoLFormer + D-MPNN consensus | 0.74 | 0.0098 |
+| D-MPNN ensemble | 0.15 | 0.65 |
+| Random forest | 0.16 | 0.63 |
+
+</div>
+
+The language model ranked the compounds in roughly the right order. The random forest did not —
+yet it was the forest that ranked levofloxacin 7th, where both deep models buried it around
+120th, and the forest put thiostrepton, the most potent compound found, at 115th while the deep
+models ranked it 1st. Dactinomycin was 7th for MoLFormer and 192nd for the forest.
+
+No single model would have found every active. The honest conclusion is not that one
+architecture won but that they fail in different directions, which is an argument for consensus
+screening and against reading too much into a leaderboard.
+
+Two caveats belong next to that table, and they are in the paper: *n* = 11 is a small sample for
+a correlation, and the selection process favoured compounds the deep models liked, so the forest
+was partly being judged on molecules it did not nominate.
+
+## Interpretability
+
+I ran SHAP over the fingerprint bits, mapped the important bits back onto atoms to see which
+substructures drove predictions, and used Monte Carlo tree search to extract minimal active
+subgraphs scored by the MoLFormer head. β-lactam and quinolone scaffolds showed up as expected,
+which is mostly a sanity check that the models learned known chemistry rather than an artefact.
+
+One note for anyone reading the repository: the notebook is named `pneumococcus_causal.ipynb`,
+but there is no causal inference in it. It is attribution and interpretability work. The name
+is a leftover and it oversells what the analysis does.
+
+## Stack
+
+PyTorch, PyTorch Lightning, scikit-learn, imbalanced-learn, DeepChem, Chemprop, RDKit,
+transformers, Ray Tune, SHAP, UMAP. Trained on Imperial College London's PBS cluster on
+RTX6000 GPUs, with the ensembles as array jobs.

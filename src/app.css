@@ -1,0 +1,413 @@
+:root {
+	--ink: #1a1a1a;
+	--ink-soft: #55575c;
+	--ink-faint: #85878c;
+	--rule: #e2e2e0;
+	--bg: #fbfbf9;
+	--bg-inset: #f3f3f0;
+	--accent: #7a3b2e;
+	--measure: 36rem;
+	--serif: ui-serif, Charter, 'Bitstream Charter', Georgia, serif;
+	--sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, sans-serif;
+	--mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--ink: #e8e7e3;
+		--ink-soft: #a8a7a2;
+		--ink-faint: #7c7b77;
+		--rule: #32322f;
+		--bg: #16161a;
+		--bg-inset: #1e1e22;
+		--accent: #d99a86;
+	}
+}
+
+*,
+*::before,
+*::after {
+	box-sizing: border-box;
+}
+
+html {
+	-webkit-text-size-adjust: 100%;
+}
+
+body {
+	margin: 0;
+	background: var(--bg);
+	color: var(--ink);
+	font-family: var(--serif);
+	font-size: 1.0625rem;
+	line-height: 1.65;
+	-webkit-font-smoothing: antialiased;
+}
+
+/* ---------- shell ---------- */
+
+.shell {
+	max-width: 48rem;
+	margin: 0 auto;
+	padding: 0 1.5rem 6rem;
+}
+
+.masthead {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0.5rem 1.5rem;
+	padding: 2.5rem 0 2rem;
+	margin-bottom: 3rem;
+	border-bottom: 1px solid var(--rule);
+}
+
+.masthead__name {
+	font-family: var(--sans);
+	font-size: 0.9375rem;
+	font-weight: 600;
+	letter-spacing: 0.01em;
+	color: var(--ink);
+	text-decoration: none;
+	margin-right: auto;
+}
+
+.masthead nav {
+	display: flex;
+	gap: 1.25rem;
+	font-family: var(--sans);
+	font-size: 0.875rem;
+}
+
+.masthead nav a {
+	color: var(--ink-soft);
+	text-decoration: none;
+}
+
+.masthead nav a:hover,
+.masthead nav a[aria-current='page'] {
+	color: var(--accent);
+}
+
+footer.site {
+	margin-top: 5rem;
+	padding-top: 1.5rem;
+	border-top: 1px solid var(--rule);
+	font-family: var(--sans);
+	font-size: 0.8125rem;
+	color: var(--ink-faint);
+}
+
+/* ---------- type ---------- */
+
+h1,
+h2,
+h3 {
+	font-family: var(--sans);
+	line-height: 1.25;
+	letter-spacing: -0.015em;
+	text-wrap: balance;
+}
+
+h1 {
+	font-size: 1.875rem;
+	font-weight: 650;
+	margin: 0 0 0.75rem;
+}
+
+h2 {
+	font-size: 1.1875rem;
+	font-weight: 620;
+	margin: 3rem 0 0.75rem;
+}
+
+h3 {
+	font-size: 1rem;
+	font-weight: 620;
+	margin: 2rem 0 0.5rem;
+}
+
+p,
+ul,
+ol {
+	max-width: var(--measure);
+}
+
+p {
+	margin: 0 0 1.1rem;
+}
+
+ul,
+ol {
+	margin: 0 0 1.1rem;
+	padding-left: 1.2rem;
+}
+
+li {
+	margin-bottom: 0.4rem;
+}
+
+a {
+	color: var(--accent);
+	text-underline-offset: 0.18em;
+	text-decoration-thickness: 0.06em;
+}
+
+strong {
+	font-weight: 650;
+}
+
+code {
+	font-family: var(--mono);
+	font-size: 0.8125em;
+	background: var(--bg-inset);
+	padding: 0.1em 0.35em;
+	border-radius: 3px;
+}
+
+blockquote {
+	margin: 1.5rem 0;
+	padding-left: 1.1rem;
+	border-left: 2px solid var(--rule);
+	color: var(--ink-soft);
+	font-style: italic;
+	max-width: var(--measure);
+}
+
+hr {
+	border: 0;
+	border-top: 1px solid var(--rule);
+	margin: 3rem 0;
+}
+
+.lede {
+	font-size: 1.1875rem;
+	color: var(--ink-soft);
+	max-width: var(--measure);
+}
+
+.dek {
+	font-family: var(--sans);
+	font-size: 0.8125rem;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--ink-faint);
+	margin: 0 0 0.5rem;
+}
+
+/* ---------- tables ---------- */
+
+.table-wrap {
+	overflow-x: auto;
+	margin: 1.5rem 0;
+}
+
+table {
+	border-collapse: collapse;
+	font-family: var(--sans);
+	font-size: 0.875rem;
+	width: 100%;
+}
+
+th,
+td {
+	text-align: left;
+	padding: 0.5rem 1rem 0.5rem 0;
+	border-bottom: 1px solid var(--rule);
+	white-space: nowrap;
+}
+
+th {
+	font-weight: 600;
+	color: var(--ink-soft);
+	border-bottom-color: var(--ink-faint);
+}
+
+td:not(:first-child),
+th:not(:first-child) {
+	font-variant-numeric: tabular-nums;
+}
+
+/* ---------- project list (/work) ---------- */
+
+.project {
+	padding: 2rem 0;
+	border-bottom: 1px solid var(--rule);
+}
+
+.project:last-of-type {
+	border-bottom: 0;
+}
+
+.project__head {
+	display: flex;
+	flex-wrap: wrap;
+	align-items: baseline;
+	gap: 0.25rem 0.75rem;
+	margin-bottom: 0.6rem;
+}
+
+.project__head h2 {
+	margin: 0;
+	font-size: 1.125rem;
+}
+
+.project__org {
+	font-family: var(--sans);
+	font-size: 0.8125rem;
+	color: var(--ink-faint);
+}
+
+.project dl {
+	margin: 0 0 1rem;
+	max-width: var(--measure);
+}
+
+.project dt {
+	font-family: var(--sans);
+	font-size: 0.75rem;
+	letter-spacing: 0.04em;
+	text-transform: uppercase;
+	color: var(--ink-faint);
+	margin-top: 0.9rem;
+}
+
+.project dd {
+	margin: 0.15rem 0 0;
+}
+
+.stack {
+	font-family: var(--sans);
+	font-size: 0.8125rem;
+	color: var(--ink-faint);
+}
+
+.more {
+	font-family: var(--sans);
+	font-size: 0.875rem;
+}
+
+/* ---------- home cards ---------- */
+
+.cards {
+	list-style: none;
+	padding: 0;
+	margin: 2.5rem 0 0;
+	max-width: none;
+}
+
+.cards li {
+	padding: 1.25rem 0;
+	border-top: 1px solid var(--rule);
+	margin: 0;
+}
+
+.cards h2 {
+	margin: 0 0 0.25rem;
+	font-size: 1.0625rem;
+}
+
+.cards h2 a {
+	text-decoration: none;
+	color: var(--ink);
+}
+
+.cards h2 a:hover {
+	color: var(--accent);
+}
+
+.cards p {
+	margin: 0;
+	color: var(--ink-soft);
+	font-size: 1rem;
+}
+
+/* ---------- case-study header ---------- */
+
+.cs-head {
+	margin-bottom: 2.5rem;
+}
+
+.cs-meta {
+	font-family: var(--sans);
+	font-size: 0.8125rem;
+	color: var(--ink-faint);
+	margin: 0.75rem 0 0;
+	max-width: var(--measure);
+}
+
+.note {
+	font-size: 0.9375rem;
+	color: var(--ink-soft);
+	background: var(--bg-inset);
+	border-left: 2px solid var(--rule);
+	padding: 0.9rem 1.1rem;
+	margin: 1.75rem 0;
+	max-width: var(--measure);
+}
+
+.note p:last-child {
+	margin-bottom: 0;
+}
+
+/* ---------- print ---------- */
+
+@media print {
+	:root {
+		--ink: #000;
+		--ink-soft: #333;
+		--ink-faint: #555;
+		--rule: #bbb;
+		--bg: #fff;
+		--bg-inset: #fff;
+		--accent: #000;
+	}
+
+	body {
+		font-size: 10.5pt;
+		line-height: 1.45;
+	}
+
+	.masthead nav,
+	footer.site,
+	.more {
+		display: none;
+	}
+
+	.masthead {
+		padding: 0 0 0.75rem;
+		margin-bottom: 1.5rem;
+	}
+
+	.shell {
+		max-width: none;
+		padding: 0;
+	}
+
+	.project {
+		padding: 0.9rem 0;
+		break-inside: avoid;
+		page-break-inside: avoid;
+	}
+
+	h1,
+	h2,
+	h3 {
+		break-after: avoid;
+		page-break-after: avoid;
+	}
+
+	a {
+		text-decoration: none;
+	}
+
+	.print-url::after {
+		content: ' (' attr(href) ')';
+		font-size: 0.85em;
+		color: #555;
+	}
+
+	.note {
+		border-left-width: 1px;
+	}
+}

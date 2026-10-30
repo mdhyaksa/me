@@ -1,0 +1,96 @@
+---
+title: A prescribing engine that the model does not control
+org: Sirka
+period: 2025–2026
+role: I wrote the decision engine, the agent layer around it, and the shadow-mode and backtest tooling used to validate changes to it. Analytics, media and marketing features in the same codebase were built by colleagues.
+---
+
+A patient-facing assessment for a weight-management programme: it collects clinical information
+through a conversation, then does one of three things — recommend a regimen, route the case to a
+doctor for review, or stop. The third option matters as much as the first.
+
+This is private company code. The clinical logic, eligibility criteria, drug names and
+thresholds are not described here; what follows is the architecture and how changes to it were
+validated.
+
+## The design rule
+
+> The LLM orchestrates. It never makes a clinical decision.
+
+Everything else follows from that sentence. A deterministic engine holds the eligibility matrix,
+the interaction rules and a universal safety gate that hard-stops on a defined set of
+conditions. The language model's job is to conduct the conversation and call tools.
+
+Concretely, the model gets a handful of read-only tools — look up what is available, ask what a
+given option requires, check a proposed combination, request a specific input from the patient.
+It cannot write a decision. It also cannot declare itself finished: the backend computes the
+final verdict regardless of what the model says, because a model that can announce completion
+can announce the wrong completion. Tool-call budgets and timeouts bound each turn, and every
+error path — a timeout, a malformed response, an unmapped condition — falls through to doctor
+review. No failure mode ends in an automatic prescription.
+
+## Narrowing the model's role further
+
+The second version took more away from the model, which I think was the right direction.
+
+Code owns the order of questions. The model no longer decides what to ask next; it extracts
+fields from free text under a forced JSON schema and phrases the replies. Safety-critical fields
+cannot be filled from conversation at all — they are settable only through interface widgets,
+under a default-deny allowlist, so a confident misreading of a sentence cannot set the field
+that determines eligibility. A plausibility gate checks the physical measurements before they
+reach the engine, because a transposed height is not a clinical question but it produces a
+clinical answer.
+
+The pattern that generalises: use the model for what it is good at, which is understanding messy
+human text and producing fluent replies, and keep the state machine in code where you can test
+it exhaustively.
+
+## Validating a change to clinical logic
+
+This is the part I would most want to talk through, because changing an engine that affects
+prescribing is where the engineering gets genuinely difficult. A test suite tells you the new
+version does what you specified. It does not tell you how the new version differs from the one
+currently running on real patients.
+
+So engine changes shipped behind a **shadow mode**. The new engine ran passively against live
+sessions, decided nothing, and logged where it diverged from the engine in production. Divergence
+alone is expected — that is usually the point of the change. The invariant worth enforcing is
+narrower: flag any case where the new engine is *less restrictive* than the old one. A
+disagreement is a review item; a safety regression is a release blocker. Separating those two
+classes of difference was what made the signal usable, because otherwise a large intentional
+change buries the one divergence that matters.
+
+Alongside that, a backtest command replays historical sessions through a candidate engine, so a
+change could be evaluated against accumulated real cases before it saw any live traffic. On
+recent sessions the reported result was a complete match on recommended sets with zero
+safety-looser divergences.
+
+Supporting this:
+
+- A **release-blocking gate** in all three deployment workflows, not an advisory check.
+- **Shared fixtures** across the Go engine and the two TypeScript implementations, so the same
+  cases must produce the same verdicts in every language the logic exists in — the alternative
+  is three engines that agree until they don't.
+- High statement coverage on the engine, which is cheap to achieve on pure decision logic and
+  worth insisting on there specifically.
+- **Decision records** for each significant revision, and a tracked log of gaps between the
+  written clinical specification and the implemented engine. Some revisions sat pending ethics
+  committee sign-off. Keeping the gaps in a file where a clinician could read them was more
+  useful than quietly closing them.
+
+## Related work in the same service
+
+A combination-safety and substitution API: given a proposed regimen, check it for interactions,
+and where a cheaper equivalent exists, select one subject to contraindications and
+compatibility. The conversation agent in the clinic's CRM consumes this rather than reasoning
+about substitutions itself — same principle, enforced across a service boundary.
+
+I also built a close-rate analysis tool, which segments won and lost leads by routing outcome,
+engine version and the flags raised during assessment, to test two hypotheses: that escalating a
+case to doctor review suppresses conversion, and that leads drop off when they are moved between
+platforms. It runs on a daily schedule. **I am not quoting results, because none were recorded
+in a form I can verify.** The design I will stand behind; the findings I would have to re-run.
+
+## Stack
+
+Go, PostgreSQL, hosted models through OpenRouter, OpenTelemetry, Docker, GitHub Actions.
