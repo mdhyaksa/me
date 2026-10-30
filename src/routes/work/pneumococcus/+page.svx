@@ -2,15 +2,58 @@
 title: Predicting antibiotic activity against drug-resistant pneumococcus
 org: Imperial College London
 period: 2024–2026
-role: Second of seven authors. I wrote the modelling code and ran the numerical experiments together with the first author, and selected the candidates for in-vitro testing with the principal investigator. The microbiological experiments were performed and analysed by collaborators at the MRC Centre for Global Infectious Disease Analysis.
+role: Second of seven authors. I wrote the modelling code and ran the numerical experiments with the first author, and selected the candidates for in-vitro testing with the principal investigator. The microbiology was performed by collaborators at the MRC Centre for Global Infectious Disease Analysis.
 ---
 
-*Streptococcus pneumoniae* is a priority pathogen for new antibiotics, and resistance to the
-existing ones is common. Developing a new drug takes a decade; finding one among drugs that
-already exist takes less. The question we set out to answer was whether a model could pick
-repurposing candidates well enough that a lab would bother testing them.
+<script>
+  import Figure from '$lib/Figure.svelte';
+  import HBar from '$lib/HBar.svelte';
+  import Legend from '$lib/Legend.svelte';
+  import Flow from '$lib/Flow.svelte';
+  import Stats from '$lib/Stats.svelte';
 
-The work is published, open access, so the full method and every number is checkable:
+  const ic50 = [
+    { label: 'Thiostrepton',       value: 0.0001, display: '0.0001', note: 'ribosome inhibitor · 60 pM' },
+    { label: 'Ceftiofur',          value: 0.0004, display: '0.0004', note: 'cell wall synthesis' },
+    { label: 'Dactinomycin',       value: 0.004,  display: '0.004',  note: 'RNA polymerase inhibitor' },
+    { label: 'Cefodizime',         value: 0.004,  display: '0.004',  note: 'cell wall synthesis' },
+    { label: 'Cadazolid',          value: 0.004,  display: '0.004',  note: 'ribosome inhibitor' },
+    { label: 'Cefozopran',         value: 0.02,   display: '0.02',   note: 'cell wall synthesis' },
+    { label: 'Cefazolin',          value: 0.04,   display: '0.04',   note: 'cell wall synthesis' },
+    { label: 'Cefotetan',          value: 0.2,    display: '0.2',    note: 'cell wall synthesis' },
+    { label: 'Levofloxacin',       value: 0.4,    display: '0.4',    note: 'the only one already known active' },
+    { label: 'Linaclotide',        value: 0.025,  display: '>0.025', censored: true, note: 'not active at the tested concentration' },
+    { label: 'Cefotiam-cilexetil', value: 0.1,    display: '>0.1',   censored: true, note: 'a prodrug needing esterases absent in vitro' }
+  ];
+
+  const rho = [
+    { label: 'MoLFormer ensemble',  value: 0.75, display: '0.75', note: 'p = 0.0073' },
+    { label: 'MoLFormer + D-MPNN',  value: 0.74, display: '0.74', note: 'p = 0.0098' },
+    { label: 'Random forest',       value: 0.16, display: '0.16', series: 2, note: 'p = 0.63 — not significant' },
+    { label: 'D-MPNN ensemble',     value: 0.15, display: '0.15', series: 2, note: 'p = 0.65 — not significant' }
+  ];
+
+  const prauc = [
+    { label: 'MoLFormer ∩ RF',   value: 0.630, display: '0.630' },
+    { label: 'MoLFormer ∪ RF',   value: 0.590, display: '0.590' },
+    { label: 'MoLFormer ens.',   value: 0.528, display: '0.528' },
+    { label: 'Random forest',    value: 0.526, display: '0.526' },
+    { label: 'D-MPNN ensemble',  value: 0.437, display: '0.437' }
+  ];
+</script>
+
+*Streptococcus pneumoniae* is a priority pathogen for new antibiotics. Developing a new drug
+takes a decade; finding one among drugs that already exist takes less. We asked whether a model
+could pick repurposing candidates well enough to be worth a lab's time.
+
+<Stats items={[
+  { value: '36,352', label: 'compounds', sub: '1,849 active' },
+  { value: '6,747', label: 'drugs screened', sub: 'Drug Repurposing Hub' },
+  { value: '9 / 11', label: 'active in vitro', sub: 'IC50 ≤ 0.4 µg/mL' },
+  { value: '60 pM', label: 'most potent hit', sub: 'thiostrepton' }
+]} />
+
+Published open access, so every number below is checkable:
 
 > Fitch, J. S.; **Ariadi, M. D.**; Kwun, M. J.; Howells, L.; Hernandez-Hernandez, S.;
 > Croucher, N. J.; Ballester, P. J. "Artificial Intelligence-Guided Phenotypic Drug Repurposing
@@ -19,143 +62,126 @@ The work is published, open access, so the full method and every number is check
 > [full text on Europe PMC](https://europepmc.org/article/MED/42745629)
 
 My working repository for the modelling is
-[github.com/mdhyaksa/pneumoccusVS](https://github.com/mdhyaksa/pneumoccusVS). Note that the
-paper's own data-availability statement points at the first author's repository, which is the
-canonical artefact for the publication.
+[github.com/mdhyaksa/pneumoccusVS](https://github.com/mdhyaksa/pneumoccusVS). The paper's own
+data-availability statement points at the first author's repository, which is the canonical
+artefact for the publication.
 
-## The data problem comes first
+## The prospective result
 
-We assembled 36,352 compounds from ChEMBL and PubChem: 1,849 with measured activity against
-*S. pneumoniae*, mostly from assays on erythromycin- and penicillin-resistant strains, and
-34,503 inactive.
+Eleven drugs went to the lab. Nine reduced growth of *S. pneumoniae* R6.
 
-That ratio is the first thing to be suspicious of, and the inactives are where the judgement
-lies. Genuine pneumococcal screening data is scarce, so the bulk of the negative class comes
-from a published *S. aureus* growth-inhibition screen, treated as presumed-inactive. That is an
-assumption, not a measurement, and the paper justifies it on two grounds: the hit rate in
-pneumococcal screens runs around 0.6%, so an untested compound is overwhelmingly likely to be
-inactive; and disk-diffusion results for the two species correlate at 0.80 across 47
-antibiotic–concentration pairs. We also ablated it — retraining without those presumed
-negatives — and reported what changed.
+<Legend items={[
+  { label: 'Active in vitro', series: 1 },
+  { label: 'Not active at the tested concentration', censored: true }
+]} />
 
-## The split matters more than the model
+<Figure
+  title="Measured IC50 of the 11 prospectively selected drugs"
+  caption="Log scale, lower is more potent. Shown as a dot plot rather than bars: on a log axis there is no zero baseline, so bar length would imply a magnitude it cannot carry. Hollow markers with a caret are lower bounds — those two did not clear the threshold."
+  source="Advanced Science 2026, Table 2. Assay: S. pneumoniae R6, 3 biological replicates per concentration.">
+  <HBar items={ic50} mode="dot" scale="log" min={0.00008} max={0.6}
+        ticks={[0.0001, 0.001, 0.01, 0.1]}
+        format={(v) => v < 0.001 ? '0.0001' : v < 0.01 ? '0.001' : v < 0.1 ? '0.01' : '0.1'}
+        axisLabel="IC50 (µg/mL)" />
+  {#snippet table()}
+  <table>
+    <thead><tr><th>Drug</th><th>IC50 µg/mL</th><th>Mechanism</th></tr></thead>
+    <tbody>
+      {#each ic50 as d}
+        <tr><td>{d.label}</td><td>{d.display}</td><td>{d.note}</td></tr>
+      {/each}
+    </tbody>
+  </table>
+  {/snippet}
+</Figure>
 
-A molecule that closely resembles its training set is easy to score, and scoring it well tells
-you almost nothing about how the model behaves on something new. Random splits over chemical
-data produce exactly this illusion, and the resulting metrics are optimistic in a way that does
-not survive contact with a lab.
-
-So the evaluation was built to be pessimistic on purpose:
-
-1. **Hold out the structural outliers.** Any molecule whose maximum Tanimoto similarity to
-   anything else in the dataset fell below 0.5 was removed to a held-out set — 4,812 molecules.
-   These are the compounds the model has least right to be confident about, and they are the
-   test set.
-2. **Cluster what remains.** UMAP with a Jaccard metric, then agglomerative clustering, with
-   *K* chosen by silhouette score over a sweep from 3 to 50. The sweep selected **K = 26**.
-   Positive rates across clusters range from 0% to 57%, which is itself a warning about what a
-   random split would have mixed together.
-3. **Leave one cluster out.** Train an ensemble member per held-out cluster, so every member is
-   validated on a scaffold group it never saw.
-
-## Three model families over the same splits
-
-<div class="table-wrap">
-
-| Model | Representation | Shape |
-| --- | --- | --- |
-| Random forest | 2048-bit Morgan fingerprints, radius 3 | Grid search, 5-fold stratified CV, optimised for PR-AUC |
-| D-MPNN | Learned molecular graph + 200 RDKit descriptors | 26-model ensemble, median aggregation |
-| MoLFormer | Pre-trained chemical language model | 5-model ensemble, frozen encoder + FFN head |
-
-</div>
-
-The random forest is the baseline worth taking seriously, not a straw man — fingerprints plus
-trees remain hard to beat on small, imbalanced chemical datasets. The graph network learns its
-own representation. The third used a transformer pre-trained on 111 million SMILES strings with
-the encoder frozen, so roughly 80% of its 55 million parameters never updated and only the head
-was trained; the paper reports this as the first use of a pre-trained molecular language model
-for antibiotic screening.
-
-Everything was tuned against PR-AUC rather than accuracy or ROC-AUC. With a positive class
-under 6%, accuracy is uninformative and ROC-AUC is flattering; precision-recall is the metric
-that reflects what you care about, which is the quality of the top of the ranking.
-
-## Retrospective results
-
-On the held-out structural outliers, with 49 actives present:
-
-<div class="table-wrap">
-
-| Model or combination | MCC | Precision | Recall | PR-AUC | ROC-AUC |
-| --- | --- | --- | --- | --- | --- |
-| MoLFormer ∩ RF | 0.493 | 1.000 | 0.245 | **0.630** | 0.979 |
-| MoLFormer ∪ RF | **0.556** | 0.591 | 0.531 | 0.590 | 0.979 |
-| Random forest, tuned | 0.536 | 0.889 | 0.327 | 0.526 | 0.963 |
-| MoLFormer ensemble | 0.505 | 0.579 | 0.449 | 0.528 | 0.975 |
-| D-MPNN ensemble | 0.424 | 0.500 | 0.367 | 0.437 | 0.949 |
-
-</div>
-
-The intersection of the two models buys precision at the cost of recall; the union does the
-reverse. For a screen where the downstream cost is a wet-lab assay, the intersection is the
-useful end of that trade — but note the ROC-AUC column sitting at 0.95–0.98 for every row,
-including the weakest. It is the least discriminating number in the table.
-
-## The prospective test, which is the real one
-
-Retrospective metrics are a rehearsal. We screened 6,747 compounds from the Drug Repurposing
-Hub, excluding anything already tested against *S. pneumoniae* in training, took the compounds
-scoring highest by consensus and by each model individually, triaged them by hand, and sent 11
-to the lab.
-
-**Nine of the 11 strongly reduced growth of *S. pneumoniae* R6, at IC50 ≤ 0.4 µg/mL.**
-Thiostrepton came in at 0.0001 µg/mL — 60 picomolar — and ceftiofur at 0.0004 µg/mL. Only one
-of the 11, levofloxacin, was already known to be active against this organism. Thiostrepton
-held up against three multidrug-resistant strains, at 120 pM.
+Six of the eleven were cephalosporins. Only levofloxacin was already known to work against this
+organism. Thiostrepton held its potency against three multidrug-resistant strains, at 120 pM.
 
 ## Where the models disagreed
 
-This is the part I find most worth presenting. Ranking the 11 tested drugs by model score and
-correlating against their measured potency:
+This is the part worth dwelling on. Ranking the eleven tested drugs by model score against their
+measured potency:
 
-<div class="table-wrap">
+<Figure
+  title="Rank correlation with measured potency (Spearman ρ, n = 11)"
+  caption="The chemical language model ordered the compounds roughly correctly. The random forest did not — its correlation is indistinguishable from chance at this sample size."
+  source="Advanced Science 2026, Table 3. Two-tailed. Authors' caveats: n = 11 is small, and selection favoured compounds the deep models ranked highly.">
+  <HBar items={rho} max={1} ticks={[0, 0.25, 0.5, 0.75, 1]}
+        format={(v) => v.toFixed(2)} axisLabel="Spearman ρ" labelWidth={168} />
+  {#snippet table()}
+  <table>
+    <thead><tr><th>Model</th><th>ρ</th><th>p</th></tr></thead>
+    <tbody>
+      {#each rho as d}
+        <tr><td>{d.label}</td><td>{d.display}</td><td>{d.note}</td></tr>
+      {/each}
+    </tbody>
+  </table>
+  {/snippet}
+</Figure>
 
-| Model | Spearman ρ | p |
-| --- | --- | --- |
-| MoLFormer ensemble | **0.75** | 0.0073 |
-| MoLFormer + D-MPNN consensus | 0.74 | 0.0098 |
-| D-MPNN ensemble | 0.15 | 0.65 |
-| Random forest | 0.16 | 0.63 |
+But the forest was not simply worse. It ranked levofloxacin 7th where both deep models buried it
+around 120th; it put thiostrepton — the most potent compound found — at 115th, where the deep
+models ranked it 1st; dactinomycin was 7th for MoLFormer and 192nd for the forest.
 
-</div>
+**No single model would have found every active.** The conclusion is not that one architecture
+won, but that they fail in different directions — an argument for consensus screening, and
+against reading a leaderboard too literally.
 
-The language model ranked the compounds in roughly the right order. The random forest did not —
-yet it was the forest that ranked levofloxacin 7th, where both deep models buried it around
-120th, and the forest put thiostrepton, the most potent compound found, at 115th while the deep
-models ranked it 1st. Dactinomycin was 7th for MoLFormer and 192nd for the forest.
+## The split mattered more than the model
 
-No single model would have found every active. The honest conclusion is not that one
-architecture won but that they fail in different directions, which is an argument for consensus
-screening and against reading too much into a leaderboard.
+A molecule that resembles its training set is easy to score, and scoring it well says little
+about a genuinely new compound. Random splits over chemical data produce exactly that illusion.
 
-Two caveats belong next to that table, and they are in the paper: *n* = 11 is a small sample for
-a correlation, and the selection process favoured compounds the deep models liked, so the forest
-was partly being judged on molecules it did not nominate.
+<Flow steps={[
+  { label: 'Hold out the structural outliers', detail: '4,812 molecules with maximum Tanimoto similarity below 0.5 to anything else — the compounds a model has least right to be confident about become the test set' },
+  { label: 'Cluster what remains', detail: 'UMAP (Jaccard) then agglomerative clustering; K = 26 chosen by silhouette over a sweep from 3 to 50' },
+  { label: 'Leave one cluster out', detail: 'One ensemble member per held-out cluster, so every member is validated on a scaffold group it never saw' },
+  { label: 'Tune on PR-AUC', detail: 'With a positive class under 6%, accuracy is uninformative and ROC-AUC is flattering', kind: 'gate' }
+]} note="Positive rates across the 26 clusters range from 0% to 57% — a warning about what a random split would have mixed together." />
+
+Three model families ran over the same splits: a random forest on 2048-bit Morgan fingerprints;
+a 26-model directed message-passing graph network; and a five-model ensemble on a frozen
+pre-trained chemical language model, where ~80% of its 55M parameters never updated and only the
+head was trained.
+
+<Figure
+  title="Retrospective PR-AUC on the held-out structural outliers"
+  caption="49 actives in the test set. The intersection of the two best models buys precision at the cost of recall — the useful trade when the downstream cost is a wet-lab assay. ROC-AUC sat at 0.95–0.98 for every row including the weakest, which is why it is not the metric shown."
+  source="Held-out set: 4,812 molecules, Tanimoto < 0.5 to any other compound.">
+  <HBar items={prauc} max={0.7} ticks={[0, 0.2, 0.4, 0.6]}
+        format={(v) => v.toFixed(1)} axisLabel="PR-AUC" labelWidth={150} />
+  {#snippet table()}
+  <table>
+    <thead><tr><th>Model</th><th>PR-AUC</th></tr></thead>
+    <tbody>
+      {#each prauc as d}<tr><td>{d.label}</td><td>{d.display}</td></tr>{/each}
+    </tbody>
+  </table>
+  {/snippet}
+</Figure>
+
+## The data, and one judgement call
+
+1,849 compounds with measured activity came from ChEMBL and PubChem, mostly from assays on
+erythromycin- and penicillin-resistant strains. The 34,503 inactives are mostly *presumed*
+inactive, taken from a published *S. aureus* screen — an assumption, not a measurement. The paper
+justifies it on a pneumococcal screening hit rate around 0.6% and a 0.80 disk-diffusion
+correlation between the two species across 47 antibiotic–concentration pairs, and ablates it by
+retraining without those negatives.
 
 ## Interpretability
 
-I ran SHAP over the fingerprint bits, mapped the important bits back onto atoms to see which
-substructures drove predictions, and used Monte Carlo tree search to extract minimal active
-subgraphs scored by the MoLFormer head. β-lactam and quinolone scaffolds showed up as expected,
-which is mostly a sanity check that the models learned known chemistry rather than an artefact.
+SHAP over fingerprint bits, substructure highlighting to map important bits back onto atoms, and
+Monte Carlo tree search to extract minimal active subgraphs scored by the MoLFormer head. β-lactam
+and quinolone scaffolds surfaced as expected — mostly a sanity check that the models learned known
+chemistry.
 
-One note for anyone reading the repository: the notebook is named `pneumococcus_causal.ipynb`,
-but there is no causal inference in it. It is attribution and interpretability work. The name
-is a leftover and it oversells what the analysis does.
+One note for anyone opening the repository: the notebook named `pneumococcus_causal.ipynb`
+contains no causal inference. It is attribution work, and the name oversells it.
 
 ## Stack
 
-PyTorch, PyTorch Lightning, scikit-learn, imbalanced-learn, DeepChem, Chemprop, RDKit,
-transformers, Ray Tune, SHAP, UMAP. Trained on Imperial College London's PBS cluster on
-RTX6000 GPUs, with the ensembles as array jobs.
+PyTorch, Lightning, scikit-learn, imbalanced-learn, DeepChem, Chemprop, RDKit, transformers,
+Ray Tune, SHAP, UMAP. Trained on Imperial's PBS cluster on RTX6000 GPUs, ensembles as array jobs.

@@ -10,6 +10,26 @@
 	--serif: ui-serif, Charter, 'Bitstream Charter', Georgia, serif;
 	--sans: ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Helvetica, sans-serif;
 	--mono: ui-monospace, 'SF Mono', Menlo, Consolas, monospace;
+
+	/* Chart palette. Validated against this surface in both modes:
+	   all-pairs CVD ΔE 9.2 light / 9.4 dark, normal-vision 24.0 / 20.9.
+	   Light-mode series-3 sits below 3:1 on the surface, so every chart
+	   ships visible direct labels (the relief rule) — do not drop them. */
+	--series-1: #2a78d6;
+	--series-2: #eb6834;
+	--series-3: #1baf7a;
+	--grid: #e6e6e3;
+	--mark-muted: #b9b9b4;
+}
+
+@media (prefers-color-scheme: dark) {
+	:root {
+		--series-1: #3987e5;
+		--series-2: #d95926;
+		--series-3: #199e70;
+		--grid: #2e2e2b;
+		--mark-muted: #55554f;
+	}
 }
 
 @media (prefers-color-scheme: dark) {

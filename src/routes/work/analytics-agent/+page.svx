@@ -5,62 +5,58 @@ period: 2025–2026
 role: A design contribution, not an implementation one. I specified the agent and its execution model; a colleague built it. It is listed here for the decision at its centre, not to claim the code.
 ---
 
+<script>
+  import Flow from '$lib/Flow.svelte';
+</script>
+
 Colleagues in a small product team needed answers from product and behavioural data — how a
 funnel differs between two cohorts, whether a change moved engagement — and getting them meant
-either waiting on whoever knew the query layer or learning it themselves. Neither happens
-reliably when the question is mildly urgent and only mildly important.
+waiting on whoever knew the query layer, or learning it. Neither happens reliably when a question
+is mildly urgent and only mildly important.
 
-I should be straightforward about my part in this. The design and the execution model are mine;
-the implementation is a colleague's work, and the commits are in their name. I am including it
-because the central decision is one I would defend in a design review, and it is the kind of
-decision that gets made by default rather than deliberately.
+Being straightforward about my part: the design and the execution model are mine, the
+implementation is a colleague's work and the commits are in their name. It is here because the
+central decision is one I would defend in a design review, and it is the kind that usually gets
+made by default rather than deliberately.
 
 ## Query-writing versus code-writing
 
-The default shape for this is text-to-SQL: the agent writes a query, something executes it, the
-user gets rows back. It is well-trodden, the failure modes are understood, and the execution
-boundary is somebody else's problem because the database already enforces one.
+<Flow steps={[
+  { label: 'Text-to-SQL — the default shape', detail: 'The agent writes one query, something executes it, the user gets rows. Well-trodden, and the execution boundary is the database’s problem' },
+  { label: 'But the questions needed arithmetic between queries', detail: 'A funnel compared across two cohorts; a rate normalised by its exposure; a retention curve read against a release date. Forcing those into one query produces a query nobody can read or check', kind: 'gate' },
+  { label: 'So: an agent that writes code', detail: 'Fetch, fetch, join, compute, describe. The steps compose naturally', kind: 'model' },
+  { label: 'Which makes the execution boundary the real design problem', detail: 'Not an implementation detail — something now runs generated code', kind: 'gate' }
+]} />
 
-It also could not answer the questions being asked. A funnel compared across two cohorts, a rate
-normalised by its exposure, a retention curve read against a release date — these need more than
-one retrieval and some arithmetic between them. You can sometimes force that into a single
-query, and what you get is a query nobody can read and nobody can check. An agent that writes
-*code* composes the steps naturally: fetch, fetch, join, compute, and describe what came out.
+That last step is the whole trade. Two options, both legitimate:
 
-The cost of that choice is the whole design problem. Once the agent writes code, something has
-to run generated code, and the execution boundary stops being an implementation detail:
+- **In-process with static validation** — inspect the generated code before running it and reject
+  anything outside an allowed set of operations. Cheap, fast, no extra infrastructure, and leaky
+  in principle, because validating untrusted code by inspection is a losing position to defend.
+- **An isolated runtime** — execute with no ambient access to the host or network. Sound, and it
+  costs startup latency on every call, which is felt in a chat interface where someone is waiting.
 
-- **In-process with static validation** — inspect the generated code before running it and
-  reject anything outside an allowed set of operations. Cheap, fast, no extra infrastructure,
-  and leaky in principle, since validating untrusted code by inspection is a losing position to
-  defend.
-- **An isolated runtime** — execute in a sandbox with no ambient access to the host or the
-  network. Sound, and it costs startup latency on every call, which is felt in a chat interface
-  where the user is waiting.
-
-What I specified was that both exist and the choice is configurable, so the cheap path can be
-used where the data is non-sensitive and the strict path enforced where it is not. The point is
-less which one wins than that it is a decision with a stated rationale rather than whatever the
-first prototype happened to do.
+What I specified was that both exist and the choice is configurable: the cheap path where the
+data is non-sensitive, the strict path enforced where it is not. The point is less which one wins
+than that it is a decision with a stated rationale rather than whatever the first prototype did.
 
 ## Keeping the tool surface small
 
-The other half of the design was restraint about what the agent can reach. Rather than general
-query access, a small number of read-only tools over the sources the product already had, each
-with a described schema, and the agent composes them. A narrow tool surface makes the agent's
-behaviour easier to predict, keeps a generated-code mistake bounded by what the tools expose,
-and means a reviewer reading a transcript can tell what was actually touched.
+The other half of the design was restraint about what the agent can reach: not general query
+access, but a small number of read-only tools over sources the product already had, each with a
+described schema, composed by the agent.
 
-Access is read-only by construction. The agent analyses; it does not write back.
+A narrow surface makes behaviour easier to predict, bounds a generated-code mistake by what the
+tools expose, and means a reviewer reading a transcript can tell what was actually touched.
+Access is read-only by construction — the agent analyses, it does not write back.
 
 ## What this is not
 
 No churn or retention modelling, no forecasting, no causal inference. It is a question-answering
-interface over existing product and behavioural data, not a modelling system, and I would not
-present it as one.
+interface over existing product data, not a modelling system, and I would not present it as one.
 
-**Outcome: not measured.** I have no adoption or answer-accuracy figures for this and will not
-estimate them.
+**Outcome: not measured.** I have no adoption or answer-accuracy figures and will not estimate
+them.
 
 ## Stack
 

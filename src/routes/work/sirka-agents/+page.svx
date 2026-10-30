@@ -2,152 +2,158 @@
 title: Clinical conversation agents and retrieval
 org: Sirka
 period: 2025–2026
-role: I built the agent service end to end as its sole author — retrieval, agents, guardrails, the evaluation suite and the deployment pipeline. The surrounding CRM it plugs into was built by the wider team.
+role: I built the agent service end to end as its sole author — retrieval, agents, guardrails, the evaluation suite and the deployment pipeline. The surrounding CRM was built by the wider team.
 ---
 
-Sirka runs a telehealth weight-management clinic in Indonesia. Patient and lead conversations
-arrive over WhatsApp and Instagram, and every one of them was answered by a person. The goal was
-to lower that load and answer outside working hours, with booking a consultation as the thing
-success was measured by.
+<script>
+  import Figure from '$lib/Figure.svelte';
+  import HBar from '$lib/HBar.svelte';
+  import Legend from '$lib/Legend.svelte';
+  import Flow from '$lib/Flow.svelte';
+  import Stats from '$lib/Stats.svelte';
 
-This is private company code, so what follows describes the design and the measured results
-without links or excerpts. No prompts, clinical rules, prices or knowledge-base content appear
-here.
+  const recall = [
+    { label: 'Hybrid (RRF)', value: 0.971, display: '0.971' },
+    { label: 'Dense only',   value: 0.941, display: '0.941' },
+    { label: 'Lexical only', value: 0.309, display: '0.309', series: 2 }
+  ];
 
-## Shape of the system
+  const mrr = [
+    { label: 'Dense only',   value: 0.862, display: '0.862' },
+    { label: 'Hybrid (RRF)', value: 0.860, display: '0.860' },
+    { label: 'Lexical only', value: 0.270, display: '0.270', series: 2 }
+  ];
 
-Two tool-calling agents — one facing new leads, one handling post-consultation follow-up — plus
-a third that pre-fills a medical record from the consultation transcript. Each runs as a
-tool-calling loop against a hosted model, with tools that call back into the CRM over an
-authenticated internal boundary. The agents never hold credentials for the downstream clinical
-systems; they ask the CRM, and the CRM makes those calls.
+  const byCategory = [
+    { label: 'Prohibited',   value: 16, display: '16' },
+    { label: 'Frontliner',   value: 12, display: '12' },
+    { label: 'FAQ',          value: 10, display: '10' },
+    { label: 'Price',        value: 8,  display: '8' },
+    { label: 'Blog',         value: 8,  display: '8' },
+    { label: 'Booking',      value: 7,  display: '7' },
+    { label: 'Product',      value: 6,  display: '6' },
+    { label: 'Multi-turn',   value: 6,  display: '6', series: 2 },
+    { label: 'Out of scope', value: 4,  display: '4' },
+    { label: 'Typo',         value: 4,  display: '4' }
+  ];
+</script>
 
-There is no agent framework here, which was a deliberate choice rather than an aesthetic one.
-The prompts carry medical safety wording that clinicians needed to review and amend directly,
-and a framework that assembles prompts at runtime puts that text one layer away from the people
-responsible for it. I wrote the loop instead. The cost is that I own the retry and tool-dispatch
-logic; the benefit is that every word sent to the model is visible in one place, and every
-prompt section, guard pattern and classifier is an operations-editable setting with a validation
-check that refuses an invalid save.
+A telehealth weight-management clinic in Indonesia. Patient and lead conversations arrive over
+WhatsApp and Instagram, and every one was answered by a person. The goal was to lower that load
+and answer outside working hours, with consultation bookings as the measure of success.
+
+Private company code, so this describes design and measured results — no links, excerpts,
+prompts, clinical rules, prices or knowledge-base content.
+
+<Stats items={[
+  { value: '0.971', label: 'recall@8, hybrid', sub: 'vs 0.941 dense' },
+  { value: '81', label: 'evaluation cases', sub: '10 categories' },
+  { value: '~370', label: 'tests', sub: 'safety gate blocks deploys' },
+  { value: '3', label: 'retrieval signals', sub: 'fused with RRF' }
+]} />
 
 ## Retrieval: three signals, and why the third exists
 
-The knowledge base is chunked deterministically along its own section anchors, so a chunk
-boundary never moves unexpectedly between ingests. Internal-only sections are excluded at
-ingest. Price and promotional sections are flagged volatile, and only collections marked
-authoritative are allowed to supply a price at all. Blog content is versioned by namespace so a
-bad ingest can be rolled back rather than repaired in place.
+<Figure
+  title="Recall@8 by retrieval mode"
+  caption="Hybrid fusion beats dense alone. Lexical alone is poor on its own, yet removing it from the fusion costs recall — it contributes where embeddings are weakest."
+  source="81-case evaluation set, k = 8.">
+  <HBar items={recall} max={1} ticks={[0, 0.25, 0.5, 0.75, 1]}
+        format={(v) => v.toFixed(2)} axisLabel="recall@8" labelWidth={120} />
+  {#snippet table()}
+  <table><thead><tr><th>Mode</th><th>recall@8</th><th>MRR</th></tr></thead>
+  <tbody>
+    <tr><td>Dense</td><td>0.941</td><td>0.862</td></tr>
+    <tr><td>Lexical</td><td>0.309</td><td>0.270</td></tr>
+    <tr><td>Hybrid</td><td>0.971</td><td>0.860</td></tr>
+  </tbody></table>
+  {/snippet}
+</Figure>
 
-Search fuses three rankings with reciprocal rank fusion:
+<Figure
+  title="Mean reciprocal rank by retrieval mode"
+  caption="Shown as its own chart rather than a second axis on the one above — two measures on one pair of axes is the chart mistake that makes everything look correlated. Hybrid wins recall and holds MRR level with dense, which is the trade worth making here."
+  source="Same evaluation set. Indonesian and English scored within a point of each other.">
+  <HBar items={mrr} max={1} ticks={[0, 0.25, 0.5, 0.75, 1]}
+        format={(v) => v.toFixed(2)} axisLabel="MRR" labelWidth={120} />
+</Figure>
 
-- **Dense** — cosine similarity over vector embeddings, stored as half-precision vectors with an
-  HNSW index.
-- **Lexical** — full-text ranking in the database.
-- **Code overlap** — exact matching on clinical and product codes.
+The three signals are vector similarity, lexical ranking, and **exact overlap on clinical and
+product codes**, fused with reciprocal rank fusion. The third exists for a concrete reason: the
+text tokeniser normalised a product code and its suffixed variant to the same token, which made
+two genuinely different products indistinguishable to lexical search. Rather than fight the
+tokeniser, I indexed codes separately and gave exact matches their own ranking.
 
-The third signal is there for a concrete reason. The text tokeniser normalised a product code
-and its suffixed variant to the same token, which made two genuinely different products
-indistinguishable to lexical search. Rather than fight the tokeniser, I indexed the codes
-separately and gave exact matches their own ranking to contribute to the fusion.
+Embeddings use Matryoshka truncation from 4096 to 1024 dimensions. I did not take that on faith —
+a script checks truncated rankings against full-width rankings, and the truncation was adopted
+only once they agreed.
 
-Embeddings use a model that supports Matryoshka truncation, cut from 4096 to 1024 dimensions for
-storage and speed. I did not take that on faith — there is a script that checks 1024-dimension
-rankings against the full-width rankings, and the truncation was adopted only after it agreed.
-Query embeddings are cached, because embedding turned out to account for roughly as much latency
-as the retrieval itself.
+<Figure
+  title="What the evaluation set is made of"
+  caption="Prohibited requests are the largest category, which is deliberate: the costly failure here is answering something the agent should refuse, not missing an FAQ. Multi-turn is highlighted because it is the weak spot — recall@8 of 0.667 against 0.971 overall."
+  source="81 cases. Category counts, not weights.">
+  <Legend items={[
+    { label: 'Categories at or above target', series: 1 },
+    { label: 'Multi-turn — known weak spot', series: 2 }
+  ]} />
+  <HBar items={byCategory} max={18} ticks={[0, 5, 10, 15]}
+        format={(v) => String(v)} axisLabel="cases" labelWidth={100} rowHeight={23} />
+</Figure>
 
-## What the retrieval actually scores
-
-An 81-case evaluation set, spanning ten categories — prohibited requests, FAQ, pricing, blog
-content, booking, product questions, multi-turn, out-of-scope and typos — at k = 8:
-
-<div class="table-wrap">
-
-| Mode | recall@8 | MRR |
-| --- | --- | --- |
-| Dense | 0.941 | 0.862 |
-| Lexical | 0.309 | 0.270 |
-| **Hybrid** | **0.971** | 0.860 |
-
-</div>
-
-Hybrid wins on recall and is level on MRR. Indonesian and English scored within a point of each
-other, which mattered because the clinic's conversations mix both.
-
-The number I would want a reviewer to ask about is multi-turn recall@8, which came in at
-**0.667** — materially worse than the rest, because a follow-up question that depends on earlier
-context retrieves poorly when embedded on its own. It is written down as the next thing to fix
-rather than folded into an average.
+That 0.667 is written down as the next thing to fix rather than folded into an average: a
+follow-up question that depends on earlier context retrieves poorly when embedded on its own.
 
 ## Safety as code, not as a judge
 
-The temptation with guardrails is to ask a model to check the model. I rejected that for the
-safety gate, for two reasons that I think generalise.
+The temptation is to ask a model to check the model. I rejected that for the blocking gate, for
+two reasons that generalise.
 
-First: a guardrail that depends on a ranking function is not a guardrail. If a safety
-instruction is a retrieved chunk, then its presence depends on retrieval quality, and a
-guardrail that is usually present is not one. So the safety context is pinned into every request
-regardless of its retrieval rank.
+**A guardrail that depends on a ranking function is not a guardrail.** If a safety instruction is
+a retrieved chunk, its presence depends on retrieval quality. So the safety context is pinned
+into every request regardless of rank.
 
-Second: a flaky gate gets skipped. A probabilistic check in CI that fails occasionally for
-reasons nobody can reproduce teaches a team to re-run it, and a gate everyone re-runs is not a
-gate. So the blocking checks are deterministic functions:
+**A flaky gate gets skipped.** A probabilistic check that fails occasionally for reasons nobody
+can reproduce teaches a team to re-run it, and a gate everyone re-runs is not a gate.
 
-- Emergency-phrase detection, which runs **before** the model is called, not after.
-- Dose-figure detection, so the agent cannot state a quantity.
-- Personal-medical-question detection, routing to a clinician.
-- An internal-terminology blocklist.
-- A price-citation check, so a price can only come from an authoritative source.
-- A grounding check that refuses an uncited claim.
-- Formality and message-length limits, which are product requirements rather than safety ones.
+<Flow steps={[
+  { label: 'Emergency phrase detection', detail: 'Deterministic, and it runs BEFORE the model is called — not as a review of what the model said. Keyword lists for 13 languages', kind: 'gate' },
+  { label: 'Classifiers', detail: 'Urgency, booking intent, lab reading, opt-out. Each documented fail-open or fail-closed by what failure costs. Urgency can only ADD an emergency, never clear one', kind: 'model' },
+  { label: 'Retrieval + pinned safety context', detail: 'Safety chunk present regardless of its retrieval rank' },
+  { label: 'Agent turn', detail: 'Tool-calling loop. No framework — the medical safety wording had to stay visible to the clinicians who review it', kind: 'model' },
+  { label: 'Pure-function checks', detail: 'Grounding (an uncited claim is refused), dose figures, personal medical questions, internal-term blocklist, price citation, formality, message length', kind: 'gate' },
+  { label: 'Reply, or handoff to a human' }
+]} note="Orange = a model decides. Black = a deterministic gate. The urgency constraint came from testing, where a small model missed an unambiguous chest-pain phrasing in Indonesian." />
 
-Model-based classifiers still exist, for urgency, booking intent, lab-result reading, opt-out
-and similar — but each is documented as fail-open or fail-closed according to what failure
-costs. The urgency classifier is the clearest case: it can only *add* an emergency flag, never
-clear one. That constraint came out of testing, where a small model failed to flag an
-unambiguous chest-pain phrasing in Indonesian. The model is allowed to escalate and not to
-de-escalate.
-
-A lesson from the first end-to-end safety run is worth recording. It reported four failures. All
-four turned out to be faulty assertions — the checker was blind to negation and was reading
-correct refusals as violations. After fixing the checker, all twelve cases passed. The failures
-were in the test, not the system, which is a good argument for reading every failure before
-acting on the aggregate.
+A lesson worth recording from the first end-to-end safety run: it reported four failures, and all
+four were faulty assertions — the checker was blind to negation and read correct refusals as
+violations. After fixing the checker, all twelve passed. The failures were in the test. That is an
+argument for reading every failure before acting on the aggregate.
 
 ## Order safety
 
-The post-consultation agent can place an order, which is the highest-risk thing in the system.
-It is checked twice, independently, in the agent and again in the backend: only drugs on the
-prescribing record, never more than the prescribed quantity, one order per record. Plan changes
-go to the consulting doctor for approval rather than being applied.
+The post-consultation agent can place an order, the highest-risk action in the system. It is
+checked twice, independently, in the agent and again in the backend: only drugs on the
+prescribing record, never above the prescribed quantity, one order per record. Plan changes go to
+the consulting doctor for approval rather than being applied.
 
-Delivery phone numbers are parsed from the patient's own message rather than taken from the
-model's output, because on one occasion the model produced a plausible invented number. And one
-category of medication cannot be shipped outside the metropolitan area — that check fails
-closed, routing to a human when the delivery region cannot be established.
+Delivery phone numbers are parsed from the patient's own message rather than taken from model
+output, because the model once produced a plausible invented number. One medication category
+cannot ship outside the metropolitan area, and that check **fails closed** — if the delivery
+region cannot be established, it routes to a human.
 
-## Operations and MLOps
+## Operations
 
-- **Tests:** around 370 test functions. The safety and unit gate runs in CI *before* the
-  container build and before cloud authentication, so a safety failure costs nothing downstream
-  and cannot be bypassed by a successful build.
-- **Nightly end-to-end run** against the live model, separate from the deterministic suite,
-  because the deterministic gate deliberately does not exercise model behaviour.
-- **Audit trail:** every turn writes a compliance record. It stores setting *names*, never
-  patient values — the record proves which configuration produced a reply without becoming a
-  second copy of patient data.
-- **Per-turn traces** surfaced to agents in the inbox, so a human taking over a conversation can
-  see what the model did and which tools it called.
-- **Provider pinning**, after measuring roughly 1 second to first token when pinned against
-  about 14.7 seconds unpinned on the same model.
-- Model routing with documented fallbacks per agent, chosen on cost, latency and healthcare
-  benchmark performance rather than on a single leaderboard.
-- Containerised, deployed to staging on pull request and to production on release, with
-  path-filtered workflows so each service builds independently.
-
-The handover documentation records known gaps as well, including the fact that provider-side
-traces cannot be joined to a conversation ID. I would rather hand over a list of what does not
-work than let someone discover it.
+- The safety and unit gate runs in CI **before** the container build and before cloud
+  authentication, so a safety failure costs nothing downstream and cannot be bypassed by a
+  successful build.
+- A nightly end-to-end run against the live model, separate from the deterministic suite.
+- An audit record per turn storing setting *names*, never patient values — it proves which
+  configuration produced a reply without becoming a second copy of patient data.
+- Per-turn traces surfaced in the agent inbox, so a human taking over sees what the model did.
+- Provider pinning, after measuring roughly 1 second to first token pinned against about 14.7
+  unpinned on the same model.
+- Handover documentation records the known gaps too, including that provider-side traces cannot
+  be joined to a conversation ID.
 
 ## Stack
 
